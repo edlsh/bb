@@ -59,6 +59,11 @@ routing?, allowProviderChange?, align?, disabled?, className? }`, where `routing
 
   `allowProviderChange={false}` hides the provider tabs while leaving model,
   reasoning, and service-tier controls available for the fixed `providerId`.
+  ACP agents and catalogs with `routeProviderId` also show a Model provider
+  dropdown above the model list. It starts at the selected model's provider
+  and filters models, search, and More models without changing the selection
+  until a model is chosen. Models without a route appear under Agent default.
+  This dropdown remains available when `allowProviderChange` is false.
   This is independent of routing: one environment can run several providers.
   `align` optionally sets the popover to `"start"`, `"center"`, or `"end"`;
   it defaults to `"start"`.

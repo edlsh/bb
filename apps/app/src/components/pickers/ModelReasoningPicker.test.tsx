@@ -6,7 +6,9 @@ import {
   fireEvent,
   render,
   screen,
+  within,
 } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import type { AvailableModel, ReasoningLevel } from "@bb/domain";
 import type {
   SystemExecutionOptionsModelLoadError,
@@ -201,6 +203,8 @@ function renderPicker({
   );
 
   const picker = (
+    overrides: Partial<ComponentProps<typeof ModelReasoningPicker>> = {},
+  ) => (
     <div data-app-composer>
       <ModelReasoningPicker
         providerOptions={pickerProviderOptions}
@@ -223,29 +227,39 @@ function renderPicker({
         muted={muted}
         modal={false}
         handoff={handoff}
+        {...overrides}
       />
       <button type="button">Composer action</button>
     </div>
   );
-  const pickerWithPane = splitPane ? (
-    <PaneContext.Provider value={splitPaneContext}>
-      {picker}
-    </PaneContext.Provider>
-  ) : (
-    picker
-  );
-  render(
-    compact ? (
+  const content = (
+    overrides: Partial<ComponentProps<typeof ModelReasoningPicker>> = {},
+  ) => {
+    const pickerWithPane = splitPane ? (
+      <PaneContext.Provider value={splitPaneContext}>
+        {picker(overrides)}
+      </PaneContext.Provider>
+    ) : (
+      picker(overrides)
+    );
+    return compact ? (
       <CompactViewportOverrideProvider isCompactViewport>
         {pickerWithPane}
       </CompactViewportOverrideProvider>
     ) : (
       pickerWithPane
-    ),
-    { wrapper },
-  );
+    );
+  };
+  const { rerender } = render(content(), { wrapper });
 
-  return { onSelectedProviderChange, onModelChange, onReasoningChange };
+  return {
+    onSelectedProviderChange,
+    onModelChange,
+    onReasoningChange,
+    rerenderPicker: (
+      overrides: Partial<ComponentProps<typeof ModelReasoningPicker>>,
+    ) => rerender(content(overrides)),
+  };
 }
 
 afterEach(() => {
@@ -922,14 +936,192 @@ describe("ModelReasoningPicker", () => {
 
     fireEvent.click(trigger);
 
-    expect(screen.getAllByText(modelLabel)).toHaveLength(3);
-    const apiQualifier = screen.getByText("openai");
-    expect(screen.getByText("openai-codex")).not.toBeNull();
+    const modelProvider = screen.getByRole("combobox", {
+      name: "Model provider",
+    });
+    expect(modelProvider).toHaveProperty("value", "openai-codex");
+    expect(screen.getAllByText(modelLabel)).toHaveLength(2);
+    expect(
+      within(modelProvider)
+        .getAllByRole("option")
+        .map((option) => option.getAttribute("value")),
+    ).toEqual(["openai", "openai-codex"]);
 
-    fireEvent.click(apiQualifier);
+    fireEvent.change(modelProvider, { target: { value: "openai" } });
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(screen.getAllByText(modelLabel)).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole("dialog")).getByText(modelLabel));
 
     expect(onModelChange).toHaveBeenCalledWith(apiModel);
   });
+
+  it("limits search and keyboard selection to the selected model provider, including more models", () => {
+    const { onModelChange } = renderPicker({
+      selectedProviderId: "acp-agent",
+      pickerProviderOptions: [
+        { value: "acp-agent", label: "ACP Agent", family: "acp" },
+      ],
+      modelOptions: [
+        { value: "alpha/main", label: "Main", routeProviderId: "alpha" },
+        { value: "alpha/one", label: "One", routeProviderId: "alpha" },
+        { value: "alpha/two", label: "Two", routeProviderId: "alpha" },
+        { value: "alpha/three", label: "Three", routeProviderId: "alpha" },
+        { value: "alpha/four", label: "Four", routeProviderId: "alpha" },
+        { value: "beta/legacy", label: "Legacy beta", routeProviderId: "beta" },
+      ],
+      moreModelOptions: [
+        {
+          value: "alpha/legacy",
+          label: "Legacy alpha",
+          routeProviderId: "alpha",
+        },
+        {
+          value: "beta/old",
+          label: "Legacy beta old",
+          routeProviderId: "beta",
+        },
+      ],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+    expect(screen.queryByText("Legacy beta")).toBeNull();
+
+    const search = screen.getByPlaceholderText("Search models");
+    fireEvent.change(search, { target: { value: "legacy" } });
+
+    expect(screen.getByText("Legacy alpha")).not.toBeNull();
+    expect(screen.queryByText("Legacy beta")).toBeNull();
+    expect(screen.queryByText("Legacy beta old")).toBeNull();
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(onModelChange).toHaveBeenCalledExactlyOnceWith("alpha/legacy");
+  });
+
+  it("compact: filters primary and more models and resets the provider when reopened", async () => {
+    const { onModelChange, onReasoningChange } = renderPicker({
+      compact: true,
+      selectedProviderId: "acp-agent",
+      pickerProviderOptions: [
+        { value: "acp-agent", label: "ACP Agent", family: "acp" },
+      ],
+      modelOptions: [
+        { value: "alpha/main", label: "Alpha main", routeProviderId: "alpha" },
+        { value: "beta/main", label: "Beta main", routeProviderId: "beta" },
+      ],
+      moreModelOptions: [
+        { value: "alpha/old", label: "Alpha old", routeProviderId: "alpha" },
+        { value: "beta/old", label: "Beta old", routeProviderId: "beta" },
+      ],
+    });
+    const trigger = screen.getByRole("button", {
+      name: "Provider, model and reasoning",
+    });
+    fireEvent.click(trigger);
+    const modelProvider = await screen.findByRole("combobox", {
+      name: "Model provider",
+    });
+    expect(modelProvider).toHaveProperty("value", "alpha");
+    expect(screen.queryByText("Beta main")).toBeNull();
+
+    fireEvent.keyDown(modelProvider, { key: "ArrowRight" });
+    expect(onReasoningChange).not.toHaveBeenCalled();
+    fireEvent.change(modelProvider, { target: { value: "beta" } });
+    expect(onModelChange).not.toHaveBeenCalled();
+    expect(screen.getByText("Beta main")).not.toBeNull();
+    expect(screen.getAllByText("Alpha main")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "More models" }));
+    expect(screen.getByText("Beta old")).not.toBeNull();
+    expect(screen.queryByText("Alpha old")).toBeNull();
+
+    fireEvent.keyDown(modelProvider, { key: "Escape" });
+    const drawer = document.querySelector<HTMLElement>(
+      "[data-persistent-drawer-content]",
+    );
+    expect(drawer).not.toBeNull();
+    if (drawer === null) return;
+    fireEvent.transitionEnd(drawer, { propertyName: "transform" });
+    fireEvent.click(trigger);
+
+    expect(
+      screen.getByRole("combobox", { name: "Model provider" }),
+    ).toHaveProperty("value", "alpha");
+    expect(screen.queryByText("Beta main")).toBeNull();
+    expect(screen.queryByText("Beta old")).toBeNull();
+    expect(onModelChange).not.toHaveBeenCalled();
+  });
+
+  it("shows an Agent default provider for ACP models without routing metadata", () => {
+    renderPicker({
+      selectedProviderId: "acp-agent",
+      pickerProviderOptions: [
+        { value: "acp-agent", label: "ACP Agent", family: "acp" },
+      ],
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+
+    const modelProvider = screen.getByRole("combobox", {
+      name: "Model provider",
+    });
+    expect(modelProvider).toHaveProperty("value", "");
+    expect(within(modelProvider).getAllByRole("option")).toHaveLength(1);
+    expect(
+      within(modelProvider).getByRole("option", { name: "Agent default" }),
+    ).toHaveProperty("selected", true);
+  });
+
+  it("omits the provider dropdown for agents without nested model providers", () => {
+    renderPicker();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+
+    expect(
+      screen.queryByRole("combobox", { name: "Model provider" }),
+    ).toBeNull();
+  });
+
+  it.each(["agent", "routing", "model"] as const)(
+    "clears a stale provider filter when the %s changes",
+    (changed) => {
+      const models = [
+        { value: "alpha/main", label: "Alpha main", routeProviderId: "alpha" },
+        { value: "beta/main", label: "Beta main", routeProviderId: "beta" },
+      ];
+      const { rerenderPicker, onModelChange } = renderPicker({
+        selectedProviderId: "first-agent",
+        pickerProviderOptions: [
+          { value: "first-agent", label: "First", family: "acp" },
+          { value: "second-agent", label: "Second", family: "acp" },
+        ],
+        providerRouting: { hostId: "first-host" },
+        modelOptions: models,
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Provider, model and reasoning" }),
+      );
+      fireEvent.change(
+        screen.getByRole("combobox", { name: "Model provider" }),
+        { target: { value: "beta" } },
+      );
+
+      rerenderPicker(
+        changed === "agent"
+          ? { selectedProviderId: "second-agent" }
+          : changed === "routing"
+            ? { providerRouting: { hostId: "second-host" } }
+            : { modelValue: "alpha/other" },
+      );
+
+      expect(
+        screen.getByRole("combobox", { name: "Model provider" }),
+      ).toHaveProperty("value", "alpha");
+      expect(screen.queryByText("Beta main")).toBeNull();
+      expect(onModelChange).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses picker search policy and selects the match by keyboard", () => {
     const { onModelChange } = renderPicker({ modelOptions: manyCodexModels });
