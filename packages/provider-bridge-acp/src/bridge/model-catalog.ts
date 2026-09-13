@@ -203,6 +203,17 @@ export function buildAcpNativeReasoningSupport(
   };
 }
 
+function modelRouteMetadata(
+  modelId: string,
+  metadata: {
+    routeProviderId?: string;
+  } = {},
+): Pick<AvailableModel, "routeProviderId"> {
+  const routeProviderId =
+    metadata.routeProviderId ?? /^([^/\s:]+)\/\S+$/u.exec(modelId)?.[1];
+  return routeProviderId ? { routeProviderId } : {};
+}
+
 export function buildModelCatalogFromConfigOptions(
   modelOption: AcpConfigOption | undefined,
   reasoningByModel?: ReadonlyMap<string, AcpNativeReasoningSupport>,
@@ -222,6 +233,7 @@ export function buildModelCatalogFromConfigOptions(
     return {
       id: option.value,
       model: option.value,
+      ...modelRouteMetadata(option.value, option),
       displayName: option.name ?? option.value,
       description: "",
       supportedReasoningEfforts: reasoning.supportedReasoningEfforts,
@@ -252,6 +264,7 @@ export function buildModelCatalogFromSessionModels(
     return {
       id: model.modelId,
       model: model.modelId,
+      ...modelRouteMetadata(model.modelId, model),
       displayName: model.name ?? model.modelId,
       description: model.description ?? "",
       supportedReasoningEfforts: ACP_NATIVE_REASONING_EFFORTS,
@@ -420,6 +433,7 @@ export function buildAgentModelCatalog(
     models.push({
       id: defaultVariant.id,
       model: defaultVariant.id,
+      ...modelRouteMetadata(defaultVariant.id),
       displayName: familyDisplayName(
         defaultVariant.displayName,
         defaultVariant.effortToken,

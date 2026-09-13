@@ -251,10 +251,18 @@ const acpOptionalString = z
   .transform((value) => value ?? undefined)
   .optional();
 
+const acpOptionalModelProviderId = z
+  .string()
+  .trim()
+  .min(1)
+  .optional()
+  .catch(undefined);
+
 const acpConfigOptionSelectOptionSchema = z
   .object({
     value: z.string(),
     name: acpOptionalString,
+    routeProviderId: acpOptionalModelProviderId,
   })
   .passthrough();
 
@@ -275,6 +283,7 @@ const acpSessionModelSchema = z
     modelId: z.string(),
     name: acpOptionalString,
     description: acpOptionalString,
+    routeProviderId: acpOptionalModelProviderId,
   })
   .passthrough();
 
