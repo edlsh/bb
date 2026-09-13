@@ -11,6 +11,14 @@ host: `opencode`, `omp`, `grok`, and `hermes` appear as `acp-opencode`, `acp-omp
 `bb provider list` and `bb provider models <provider-id>` using its environment
 or machine selector.
 
+ACP model catalogs expose the upstream model provider as `routeProviderId` in
+`bb provider models <provider-id> --json` and the SDK's `AvailableModel` records.
+The bridge preserves an explicit `routeProviderId` from ACP model entries;
+otherwise it uses the first segment of a `provider/model` ID. Nested IDs such as
+`openrouter/anthropic/claude-sonnet-5` belong to `openrouter`. Bare IDs and agent
+defaults have no inferred provider. Model selection still uses the complete
+`model` value; the provider field is catalog metadata.
+
 Cursor project skills come from `.cursor/skills`, which can link to
 `.agents/skills`. BB lists these linked skills as read-only under `cursor-project`.
 

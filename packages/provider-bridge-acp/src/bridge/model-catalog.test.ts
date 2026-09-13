@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SAMPLE_LIST } from "./model-catalog.fixture.js";
+import { acpSessionNewResultSchema } from "../wire.js";
 import {
   buildAgentModelCatalog,
   buildAcpNativeReasoningSupport,
   buildModelCatalogFromConfigOptions,
+  buildModelCatalogFromSessionModels,
   acpNativeReasoningLevelToValue,
   findAcpModelConfigOption,
   findAcpThoughtLevelConfigOption,
@@ -61,6 +63,38 @@ describe("acp model catalog", () => {
         displayName: "grok-composer-2.5-fast",
       },
     ]);
+  });
+
+  it("keeps upstream routes and full variant ids from CLI catalogs", () => {
+    const catalog = buildAgentModelCatalog(
+      parseAgentModelLines(
+        [
+          "openai/gpt-5.5-medium - GPT 5.5 Medium",
+          "openai/gpt-5.5-high - GPT 5.5 High",
+          "openrouter/anthropic/claude-sonnet-5 - Claude Sonnet 5",
+          "amazon-bedrock/anthropic.claude-v1:0 - Claude on Bedrock",
+          "grok-4.5 - Grok 4.5",
+        ].join("\n"),
+      ),
+    );
+
+    expect(
+      catalog?.models.map(({ model, routeProviderId }) => [
+        model,
+        routeProviderId,
+      ]),
+    ).toEqual([
+      ["openai/gpt-5.5-medium", "openai"],
+      ["openrouter/anthropic/claude-sonnet-5", "openrouter"],
+      ["amazon-bedrock/anthropic.claude-v1:0", "amazon-bedrock"],
+      ["grok-4.5", undefined],
+    ]);
+    expect(
+      catalog?.resolveVariant({
+        model: "openai/gpt-5.5-medium",
+        reasoningLevel: "high",
+      }),
+    ).toBe("openai/gpt-5.5-high");
   });
 
   it("groups effort variants into families keyed by the default variant", () => {
@@ -394,6 +428,7 @@ describe("acp configOptions model catalog", () => {
         id: "opencode/big-pickle",
         model: "opencode/big-pickle",
         displayName: "OpenCode Zen/Big Pickle",
+        routeProviderId: "opencode",
         isDefault: false,
         defaultReasoningEffort: "medium",
       },
@@ -401,6 +436,7 @@ describe("acp configOptions model catalog", () => {
         id: "opencode/deepseek-v4-flash-free",
         model: "opencode/deepseek-v4-flash-free",
         displayName: "OpenCode Zen/DeepSeek V4 Flash Free",
+        routeProviderId: "opencode",
         isDefault: true,
         defaultReasoningEffort: "high",
         supportedReasoningEfforts: [
@@ -554,6 +590,131 @@ describe("acp configOptions model catalog", () => {
         options: [],
       }),
     ).toEqual([]);
+  });
+});
+
+describe("acp native model provider metadata", () => {
+  it("preserves explicit provider metadata before deriving a route from the model id", () => {
+    const entries = [
+      {
+        modelId: "vendor/model-a",
+        routeProviderId: " gateway ",
+      },
+      { modelId: "model-b", routeProviderId: "private-provider" },
+      { modelId: "model-c", routeProviderId: "custom-provider" },
+      { modelId: "openrouter/anthropic/claude-sonnet-5" },
+      { modelId: "anthropic/claude-sonnet-5" },
+    ];
+    const session = acpSessionNewResultSchema.parse({
+      sessionId: "s",
+      configOptions: [
+        {
+          id: "model",
+          type: "select",
+          currentValue: "model-b",
+          options: entries.map(({ modelId, ...metadata }) => ({
+            value: modelId,
+            ...metadata,
+          })),
+        },
+      ],
+      models: {
+        currentModelId: "model-b",
+        availableModels: entries,
+      },
+    });
+
+    for (const models of [
+      buildModelCatalogFromConfigOptions(
+        findAcpModelConfigOption(session.configOptions),
+      ),
+      buildModelCatalogFromSessionModels(session.models),
+    ]) {
+      expect(
+        models.map(({ id, model, routeProviderId, isDefault }) => ({
+          id,
+          model,
+          routeProviderId,
+          isDefault,
+        })),
+      ).toEqual([
+        {
+          id: "vendor/model-a",
+          model: "vendor/model-a",
+          routeProviderId: "gateway",
+          isDefault: false,
+        },
+        {
+          id: "model-b",
+          model: "model-b",
+          routeProviderId: "private-provider",
+          isDefault: true,
+        },
+        {
+          id: "model-c",
+          model: "model-c",
+          routeProviderId: "custom-provider",
+          isDefault: false,
+        },
+        {
+          id: "openrouter/anthropic/claude-sonnet-5",
+          model: "openrouter/anthropic/claude-sonnet-5",
+          routeProviderId: "openrouter",
+          isDefault: false,
+        },
+        {
+          id: "anthropic/claude-sonnet-5",
+          model: "anthropic/claude-sonnet-5",
+          routeProviderId: "anthropic",
+          isDefault: false,
+        },
+      ]);
+    }
+  });
+
+  it("ignores invalid optional metadata and leaves opaque selections ungrouped", () => {
+    const modelIds = [
+      "openrouter/vendor/model",
+      "acp-default",
+      "ultra",
+      "gpt-5.5",
+      "custom:Claude-Sonnet-5-0",
+      "https://example.com/model",
+      "/local/model",
+      "provider/",
+    ];
+    const session = acpSessionNewResultSchema.parse({
+      sessionId: "s",
+      configOptions: [
+        {
+          id: "model",
+          type: "select",
+          options: modelIds.map((value) => ({
+            value,
+            routeProviderId: " ",
+          })),
+        },
+      ],
+      models: {
+        availableModels: modelIds.map((modelId) => ({
+          modelId,
+          routeProviderId: 123,
+        })),
+      },
+    });
+
+    for (const models of [
+      buildModelCatalogFromConfigOptions(
+        findAcpModelConfigOption(session.configOptions),
+      ),
+      buildModelCatalogFromSessionModels(session.models),
+    ]) {
+      expect(models.map((model) => model.model)).toEqual(modelIds);
+      expect(models[0]?.routeProviderId).toBe("openrouter");
+      for (const model of models.slice(1)) {
+        expect(model).not.toHaveProperty("routeProviderId");
+      }
+    }
   });
 });
 
