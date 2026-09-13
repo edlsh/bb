@@ -251,7 +251,10 @@ export function ModelReasoningPicker({
     ? registeredToggleShortcut
     : null;
   const [searchQuery, setSearchQuery] = useState("");
-  const listRef = useResetPickerScroll<HTMLDivElement>(searchQuery);
+  const [modelProviderFilter, setModelProviderFilter] = useState<{
+    scope: string;
+    providerId: string;
+  } | null>(null);
   const [activeIndex, setActiveIndex] = useState(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const isSearching = searchQuery.trim().length > 0;
@@ -477,7 +480,73 @@ export function ModelReasoningPicker({
   const activeMoreModelOptions = previewSelectionBlocked
     ? EMPTY_MODEL_OPTIONS
     : previewMoreModelOptions;
-  const hasActiveModelOptions = activeModelOptions.length > 0;
+  const allActiveModelOptions = useMemo(
+    () => [...activeModelOptions, ...activeMoreModelOptions],
+    [activeModelOptions, activeMoreModelOptions],
+  );
+  const modelProviderIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          allActiveModelOptions.map((option) => option.routeProviderId ?? ""),
+        ),
+      ].sort(),
+    [allActiveModelOptions],
+  );
+  const showModelProviderFilter =
+    activeProvider?.family === "acp" ||
+    modelProviderIds.some((providerId) => providerId.length > 0);
+  const modelProviderScope = JSON.stringify([
+    activeProviderId,
+    providerRouting?.environmentId,
+    providerRouting?.hostId,
+    modelValue,
+  ]);
+  const [trackedModelProviderScope, setTrackedModelProviderScope] =
+    useState(modelProviderScope);
+  if (trackedModelProviderScope !== modelProviderScope) {
+    setTrackedModelProviderScope(modelProviderScope);
+    setModelProviderFilter(null);
+    setSearchQuery("");
+    setActiveIndex(-1);
+    setShowMoreModels(false);
+    setMoreModelsOpen(false);
+  }
+  const activeModelValue = isPreviewing
+    ? previewSelection?.selectedModel
+    : modelValue;
+  const selectedModelProviderId =
+    allActiveModelOptions.find((option) => option.value === activeModelValue)
+      ?.routeProviderId ?? "";
+  const modelProviderId =
+    modelProviderFilter?.scope === modelProviderScope &&
+    modelProviderIds.includes(modelProviderFilter.providerId)
+      ? modelProviderFilter.providerId
+      : modelProviderIds.includes(selectedModelProviderId)
+        ? selectedModelProviderId
+        : (modelProviderIds[0] ?? "");
+  const providerModelOptions = useMemo(
+    () =>
+      showModelProviderFilter
+        ? activeModelOptions.filter(
+            (option) => (option.routeProviderId ?? "") === modelProviderId,
+          )
+        : activeModelOptions,
+    [activeModelOptions, modelProviderId, showModelProviderFilter],
+  );
+  const providerMoreModelOptions = useMemo(
+    () =>
+      showModelProviderFilter
+        ? activeMoreModelOptions.filter(
+            (option) => (option.routeProviderId ?? "") === modelProviderId,
+          )
+        : activeMoreModelOptions,
+    [activeMoreModelOptions, modelProviderId, showModelProviderFilter],
+  );
+  const listRef = useResetPickerScroll<HTMLDivElement>(
+    JSON.stringify([searchQuery, modelProviderScope, modelProviderId]),
+  );
+  const hasActiveModelOptions = allActiveModelOptions.length > 0;
   const activeModelErrorIsProviderSpecific =
     activeModelLoadErrorMatches && activeModelLoadError !== null;
   const isShowingModelError =
@@ -490,10 +559,10 @@ export function ModelReasoningPicker({
   const activeBrandPrefix = activeProvider?.brandPrefix;
   const filteredModelOptions = useMemo(() => {
     if (!isSearching) {
-      return activeModelOptions;
+      return providerModelOptions;
     }
     return searchPickerOptions({
-      options: [...activeModelOptions, ...activeMoreModelOptions],
+      options: [...providerModelOptions, ...providerMoreModelOptions],
       query: searchQuery,
       getLabel: (option) =>
         stripModelBrandPrefix(option.label, activeBrandPrefix),
@@ -504,14 +573,14 @@ export function ModelReasoningPicker({
     });
   }, [
     activeBrandPrefix,
-    activeModelOptions,
-    activeMoreModelOptions,
+    providerModelOptions,
+    providerMoreModelOptions,
     isSearching,
     searchQuery,
   ]);
   const filteredMoreModelOptions = isSearching
     ? EMPTY_MODEL_OPTIONS
-    : activeMoreModelOptions;
+    : providerMoreModelOptions;
 
   const navRows = useMemo(
     () =>
@@ -554,6 +623,7 @@ export function ModelReasoningPicker({
       : hasSelectedModel && !modelIsLoading && !selectedModelLoadFailed);
 
   const resetBrowseState = useCallback(() => {
+    setModelProviderFilter(null);
     setHandoffMode(false);
     setHandoffReasoningLevel(null);
     setPreviewProviderId(null);
@@ -763,7 +833,9 @@ export function ModelReasoningPicker({
     MODEL_CYCLE_COMMANDS,
     (index, { target }) => {
       if (!ownsCycleChord(target)) return false;
-      const options = handoffMode ? activeModelOptions : modelOptions;
+      const options = open
+        ? [...providerModelOptions, ...providerMoreModelOptions]
+        : modelOptions;
       const value =
         handoffMode && isPreviewing
           ? (previewSelection?.selectedModel ?? "")
@@ -1066,9 +1138,7 @@ export function ModelReasoningPicker({
         <ResetBrowseStateOnContentUnmount onReset={resetBrowseState} />
         {handoffMode ? <HandoffModeHeader onBack={exitHandoffMode} /> : null}
         {showProviderTabs ? (
-          <div
-            className="flex shrink-0 items-center gap-0.5 border-b border-border bg-background px-2.5 pt-1"
-          >
+          <div className="flex shrink-0 items-center gap-0.5 border-b border-border bg-background px-2.5 pt-1">
             {providerOptions.map((provider) => {
               const TabIcon = provider.icon;
               const isActive = provider.value === activeProviderId;
@@ -1120,6 +1190,53 @@ export function ModelReasoningPicker({
                 </button>
               );
             })}
+          </div>
+        ) : null}
+
+        {showModelProviderFilter ? (
+          <div className="shrink-0 border-b border-border px-3 py-2">
+            <label
+              htmlFor={`${navId}-model-provider`}
+              className="mb-1 block text-xs text-muted-foreground"
+            >
+              Model provider
+            </label>
+            <select
+              id={`${navId}-model-provider`}
+              aria-label="Model provider"
+              value={modelProviderId}
+              disabled={
+                activeModelIsLoading ||
+                activeModelLoadFailed ||
+                previewSelectionBlocked ||
+                modelProviderIds.length === 0
+              }
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+              onChange={(event) => {
+                setModelProviderFilter({
+                  scope: modelProviderScope,
+                  providerId: event.target.value,
+                });
+                setSearchQuery("");
+                setActiveIndex(-1);
+                setShowMoreModels(false);
+                setMoreModelsOpen(false);
+              }}
+            >
+              {modelProviderIds.length === 0 ? (
+                <option value="">
+                  {activeModelIsLoading
+                    ? "Loading providers..."
+                    : "No providers available"}
+                </option>
+              ) : (
+                modelProviderIds.map((providerId) => (
+                  <option key={providerId} value={providerId}>
+                    {providerId || "Agent default"}
+                  </option>
+                ))
+              )}
+            </select>
           </div>
         ) : null}
 

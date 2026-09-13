@@ -452,6 +452,7 @@ export function useThreadCreationOptions(
       providers.map((p) => ({
         value: p.id,
         label: p.displayName,
+        family: p.family,
         icon: getProviderIconInfo("agent", p.id, p)?.icon,
         ...(p.strings?.brandPrefix === undefined
           ? {}
